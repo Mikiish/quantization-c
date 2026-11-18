@@ -1,0 +1,7 @@
+# Executables
+main
+*.exe
+*.o
+
+# Build
+build/
