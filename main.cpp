@@ -312,7 +312,8 @@ int main(void) {
     */
 
     // Test de performance avec des matrices aléatoires
-    std::mt19937 rng(42);
+    std::random_device rd;
+    std::mt19937 rng(rd());
     constexpr size_t N = 256;
 
     // 1er test : multiplication naive.
