@@ -22,7 +22,7 @@ Le projet étudie quatre aspects :
 Pour une matrice réelle $W$, on pose $M=\max_{i,j}|W_{ij}|$ et, si $M>0$, $s=M/127$. Les coefficients sont quantifiés et reconstruits par
 
 $$
-Q_{ij}=\operatorname{clip}_{[-127,127]}\!\left(\operatorname{round}\frac{W_{ij}}s\right),
+Q_{ij}=\mathrm{clip}_{[-127,127]}\!\left(\mathrm{round}\frac{W_{ij}}s\right),
 \qquad \widehat W_{ij}=sQ_{ij}.
 $$
 
