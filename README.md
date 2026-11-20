@@ -19,14 +19,14 @@ Le projet étudie quatre aspects :
 
 ### 1. Quantification uniforme symétrique INT8 — réalisée
 
-Pour une matrice réelle \(W\), on pose \(M=\max_{i,j}|W_{ij}|\) et, si \(M>0\), \(s=M/127\). Les coefficients sont quantifiés et reconstruits par
+Pour une matrice réelle $W$, on pose $M=\max_{i,j}|W_{ij}|$ et, si $M>0$, $s=M/127$. Les coefficients sont quantifiés et reconstruits par
 
-\[
+$$
 Q_{ij}=\operatorname{clip}_{[-127,127]}\!\left(\operatorname{round}\frac{W_{ij}}s\right),
 \qquad \widehat W_{ij}=sQ_{ij}.
-\]
+$$
 
-Une convention particulière traite le cas \(M=0\).
+Une convention particulière traite le cas $M=0$.
 
 - Quantification et déquantification de scalaires, tableaux et matrices.
 - Mesures de l'erreur absolue maximale, de la MSE et de l'erreur relative de Frobenius.
@@ -36,11 +36,11 @@ Une convention particulière traite le cas \(M=0\).
 - Structure générique `Matrix<T>` et stockage contigu *row-major*.
 - Produit `matmul<T, Acc>` avec distinction entre type de stockage et type d'accumulation.
 - Structure `Q8Matrix` associant une matrice INT8 et son facteur d'échelle.
-- Calcul \(Q_AQ_B\) en INT32, suivi de la reconstruction FP32 :
+- Calcul $Q_AQ_B$ en INT32, suivi de la reconstruction FP32 :
 
-\[
+$$
 \widehat{AB}=s_As_B(Q_AQ_B).
-\]
+$$
 
 - Validation numérique et premiers benchmarks face au produit FP32.
 
