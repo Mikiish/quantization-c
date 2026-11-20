@@ -6,6 +6,9 @@
 #include <vector>
 #include <stdexcept>
 #include <chrono>
+#include <random>
+#include <vector>
+#include <algorithm>
 using namespace std;
 
 float max_abs(const float *data, size_t n) {
@@ -103,7 +106,7 @@ struct Matrix {
     T *data;
 
     Matrix(size_t rows, size_t cols) : rows(rows), cols(cols), data(nullptr) {
-        data = new T[rows * cols];
+        data = new T[rows * cols]{};
     }
     ~Matrix() {
         delete[] data;
@@ -189,6 +192,26 @@ Matrix<Acc> matmul(
     return C;
 }
 
+template<typename T, typename Acc>
+Matrix<Acc> matmul_ikj(
+    const Matrix<T>& A,
+    const Matrix<T>& B
+) {
+    if (A.cols != B.rows) {
+        throw invalid_argument("⛔ Matrix dimensions do not match for multiplication.");
+    }
+    Matrix<Acc> C(A.rows, B.cols);
+    for (size_t i = 0; i < A.rows; ++i) {
+        for (size_t k = 0; k < A.cols; ++k) {
+            Acc a_ik = static_cast<Acc>(A(i, k));
+            for (size_t j = 0; j < B.cols; ++j) {
+                C(i, j) += a_ik * static_cast<Acc>(B(k, j));
+            }
+        }
+    }
+    return C;
+}
+
 /* Remarque : INT8 vaut 127 au max et 2^31-1 pour un INT32, le coef maximal d'un produit de matrice quantifiée est n*127^2.
     On peut donc multiplier des matrices de taille n < 2^31/(127^2) = 133169. On est donc très loin d'avoir un overflow sur un int32_t.
 */
@@ -196,7 +219,7 @@ Matrix<float> quantized_matmul(
     const Q8Matrix& QA,
     const Q8Matrix& QB
 ) {
-    Matrix<int32_t> S = matmul<int8_t, int32_t>(QA.mat, QB.mat); // Cette matrice n'est PAS la quantifiée du produit !
+    Matrix<int32_t> S = matmul_ikj<int8_t, int32_t>(QA.mat, QB.mat); // Cette matrice n'est PAS la quantifiée du produit !
     Matrix<float> C(S.rows, S.cols);
     float scale = QA.scale * QB.scale;
     for (size_t i = 0; i < S.rows; ++i) {
@@ -207,9 +230,42 @@ Matrix<float> quantized_matmul(
     return C;
 }
 
+Matrix<float> unif_random_matrix(
+    size_t rows,
+    size_t cols,
+    float min,
+    float max,
+    std::mt19937& rng
+) {
+    Matrix<float> mat(rows, cols);
+    std::uniform_real_distribution<float> dist(min, max);
+    for (size_t i = 0; i < rows; ++i) {
+        for (size_t j = 0; j < cols; ++j) {
+            mat(i, j) = dist(rng);
+        }
+    }
+    return mat;
+}
+
+Matrix<float> gaussian_random_matrix(
+    size_t rows,
+    size_t cols,
+    float mean,
+    float stddev,
+    std::mt19937& rng
+) {
+    Matrix<float> mat(rows, cols);
+    std::normal_distribution<float> dist(mean, stddev);
+    for (size_t i = 0; i < rows; ++i) {
+        for (size_t j = 0; j < cols; ++j) {
+            mat(i, j) = dist(rng);
+        }
+    }
+    return mat;
+}
 
 int main(void) {
-    float input[5] = {-4.0f, -2.0f, 0.0f, 1.0f, 4.0f};
+    /* float input[5] = {-4.0f, -2.0f, 0.0f, 1.0f, 4.0f};
     int8_t output[5];
     size_t n = sizeof(input) / sizeof(input[0]);
     float scale = quant_scale(input, n);
@@ -253,6 +309,78 @@ int main(void) {
     printf("Quantized Matrix Product Max absolute error: %f\n", comp.max_error);
     printf("Quantized Matrix Product MSE: %f\n", comp.mse);
     printf("Quantized Matrix Product Relative error: %f\n", comp.relative_error);
+    */
+
+    // Test de performance avec des matrices aléatoires
+    std::mt19937 rng(42);
+    constexpr size_t N = 256;
+
+    // 1er test : multiplication naive.
+    auto test_randA = gaussian_random_matrix(N, N, 0.0f, 0.02f, rng);
+    auto test_randB = gaussian_random_matrix(N, N, 0.0f, 0.02f, rng);
+    auto start = std::chrono::steady_clock::now();
+    auto test_randC = matmul<float, float>(test_randA, test_randB);
+    auto end = std::chrono::steady_clock::now();
+    std::chrono::duration<double, std::milli> elapsed = end - start;
+    printf("Time taken for %dx%d matrix multiplication: %.3f ms\n", (int)N, (int)N, elapsed.count());
+
+    // 2e test : multiplication ikj avec répétitions pour obtenir une médiane.
+    std::vector<double> times;
+    double checksum2 = 0.0;
+    for (size_t repeat = 0; repeat < 12; ++repeat) {
+        auto start = std::chrono::steady_clock::now();
+        auto test_randC = matmul_ikj<float, float>(test_randA, test_randB);
+        auto end = std::chrono::steady_clock::now();
+        // On exploite le résultat hors de la zone chronométrée.
+        for (size_t k = 0; k < test_randC.rows * test_randC.cols; ++k) {
+            checksum2 += test_randC.data[k];
+        }
+        // Première exécution = échauffement.
+        if (repeat > 0) {
+            std::chrono::duration<double, std::milli> elapsed = end - start;
+            times.push_back(elapsed.count());
+        }
+    }
+    std::sort(times.begin(), times.end());
+    printf("FP32 median: %.3f ms\n", times[5]);
+    printf("Checksum: %.10f\n", checksum2);
+
+    // 4e test bis : multiplication quantifiée avec répétitions pour obtenir une médiane.
+    std::vector<double> times_q;
+    std::vector<double> errors_max;
+    std::vector<double> errors_mse;
+    std::vector<double> errors_rel;
+    double checksum2_q = 0.0;
+    for (size_t repeat = 0; repeat < 12; ++repeat) {
+        auto start = std::chrono::steady_clock::now();
+        auto test_randQA = quantize_matrix(test_randA);
+        auto test_randQB = quantize_matrix(test_randB);
+        auto test_randC_quant = quantized_matmul(test_randQA, test_randQB);
+        auto end = std::chrono::steady_clock::now();
+        // On exploite le résultat hors de la zone chronométrée.
+        for (size_t k = 0; k < test_randC_quant.rows * test_randC_quant.cols; ++k) {
+            checksum2_q += test_randC_quant.data[k];
+        }
+        ErrorMetrics comp = compute_errors(test_randC.data, test_randC_quant.data, test_randC.rows * test_randC.cols);
+        errors_max.push_back(comp.max_error);
+        errors_mse.push_back(comp.mse);
+        errors_rel.push_back(comp.relative_error);
+
+        // Première exécution = échauffement.
+        if (repeat > 0) {
+            std::chrono::duration<double, std::milli> elapsed = end - start;
+            times_q.push_back(elapsed.count());
+        }
+    }
+    std::sort(times_q.begin(), times_q.end());
+    printf("INT8 median: %.3f ms\n", times_q[5]);
+    printf("Checksum: %.10f\n", checksum2_q);
+    std::sort(errors_max.begin(), errors_max.end());
+    std::sort(errors_mse.begin(), errors_mse.end());
+    std::sort(errors_rel.begin(), errors_rel.end());
+    printf("Quantized Matrix Product Max absolute error median: %f\n", errors_max[5]);
+    printf("Quantized Matrix Product MSE median: %.10e\n", errors_mse[5]);
+    printf("Quantized Matrix Product Relative error median: %f\n", errors_rel[5]);
 
     return 0;
 }
